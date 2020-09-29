@@ -1,0 +1,35 @@
+watermark是一种特殊的时间戳，也是一种被插入到数据流的特殊的数据结构，用于表示eventTime小于watermark的事件
+已经全部落入到相应的窗口，此时可以进行窗口计算。
+
+在一个乱序流中，窗口大小为5。
+w(5)表示eventTime < 5的所有数据均已落入相应窗口，window_end_time <= 5的所有窗口都将进行计算，计算的数据为 0 <= eventTime < 5的数据,
+窗口是一个左闭右开的区间。
+w(10)表示eventTime < 10的所有数据均已落入相应窗口，5 < window_end_time <= 10的所有窗口都将进行计算，计算数据为 5 <= eventTime < 10的数据，
+窗口是一个左闭右开的区间。
+
+watermark的生成
+通常情况下，在接收到source数据后，应该立刻生成watermark
+1.With Periodic Watermarks 周期性的生成watermark，默认周期是200ms，可通过env.getConfig().setAutoWatermarkInterval()进行修改。
+这种watermark生成方式需要实现AssignerWithPeriodicWatermarks接口。
+
+2.With Punctuated Watermarks 在满足自定义条件时生成watermark，每一个元素都有机会判断是否生成一个watermark。
+如果得到的watermark 不为null并且比之前的大就注入流中。这种watermark生成方式需要实现AssignerWithPunctuatedWatermarks接口。
+
+watermark更新规则
+单并行度 watermark单调递增，一直覆盖较小的watermark。
+多并行度 每个分区都会维护和更新自己的watermark，某一时刻的watermark取所有分区中最小的那一个。
+
+如何设置最大乱序时间
+BoundedOutOfOrdernessTimestampExtractor中watermark的计算公式为currentMaxTimestamp - maxOutOfOrderness。
+如果maxOutOfOrderness设置的太小，而自身数据发送时由于网络等原因导致乱序或者late太多，那么最终结果
+就是会有很多单条的数据在window中被触发，数据的正确性太差，容错性太低。对于严重乱序的数据，需要严格统计
+数据计算最大延迟时间，才能保证计算的数据准确。
+
+如果maxOutOfOrderness延时设置太大，则当大部分时间都已落入所属窗口时，flink迟迟不会进行窗口计算，影响数据的实时性。
+且由于在最大时间与watermark之间维护了很多未被触发的窗口，会加重flink作业的负担。
+
+延迟数据处理
+1.所谓延迟数据，即窗口已经因为watermark进行了触发，则在此之后如果还有数据进入窗口，则默认情况下不会对窗口进行再次触发和聚合计算。
+要想在数据进入已经被触发过的窗口后，还能继续触发窗口计算，则可以使用延迟数据处理机制。
+
+2.迟到的数据也可以使用侧输出(side output)特性被冲定向到另一条流中去。

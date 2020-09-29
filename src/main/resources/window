@@ -1,0 +1,56 @@
+Flink认为Batch是Streaming的一个特例，所以Flink底层引擎是一个流式引擎，在上面实现了流处理和批处理。而窗口(window)就是Streaming到Batch的一个桥梁，
+将无界数据划分成有界数据。通过定义一个窗口，收集一批数据，并对这个窗口内的数据进行聚合类计算。
+
+窗口分类
+Time Window
+时间类型
+在flink中被划分为事件时间，摄入时间，处理时间三种。
+1.如果以EventTime为基准来定义时间窗口将形成EventTimeWindow，要求消息本身就应该携带EventTime。
+2.如果以IngestingTime为基准来定义时间窗口将形成IngestingTimeWindow，以source的systemTime为准。
+3.如果以ProcessTime基准来定义时间窗口将形成ProcessTimeWindow，以operator的systemTime为准。
+
+Tumbling Time Window
+翻滚窗口能将数据流切分成不重叠的窗口，每一个事件只属于一个窗口。
+
+Sliding Time Window
+Sliding Window窗口是不间断的，需要平滑地进行窗口聚合。比如，我们每30秒计算一次最近一分钟用户购买的商品总数。
+这种窗口我们称为滑动时间窗口(Sliding Time Window)。在滑动窗口中，一个元素可以对应多个窗口。
+
+Count Window
+Count Window是根据元素个数对数据流进行分组的。
+
+Tumbling Count Window 翻滚计算窗口
+
+Sliding Count Window 滑动计数窗口
+
+Session Window 窗口在达到指定时间没有活动后将关闭
+
+窗口组件
+Window Assigner:用来决定某个元素被分配到哪个/哪些窗口中去。
+Trigger: 触发器。决定了一个窗口何时能够被计算或清除，每个窗口都会拥有一个自己的Trigger。
+Evictor: 在Trigger触发之后，在窗口被处理之前，Evictor(如果有的话)会用来剔除窗口不需要的元素，相当于一个filter。
+
+窗口处理流程:
+1.数据源源不断地进入算子，每一个达到的元素都会被交给WindowAssigner。WindowAssigner会决定元素被放到哪个或哪些窗口(window)，
+可能会创建新的窗口。因为一个元素可以被放入多个窗口中，所以同时存在多个窗口是可能的。
+2.每一个窗口都拥有一个属于自己的Trigger，Trigger上会有定时器，用来决定一个窗口何时能够被计算或清除。每当有元素加入到该窗口，
+或者之前注册的定时器超时了，那么Trigger都会被调用。Trigger的返回结果可以是continue(不做任何操作);fire(处理窗口数据);
+purge(移除窗口和窗口中的数据)，或者fire+purge。
+一个Trigger的调用结果只是fire的话，那么会计算窗口并保留窗口原样，也就是说窗口中的数据仍然保留不变，等待下次Tigger fire的时候
+再次执行计算。一个窗口可以被重复计算多次直到它被purge了。在purge之前，窗口会一直占用着内存。
+3.当Trigger fire了，窗口中的元素会被交给Evictor(如果指定了的话)。Evictor主要用来遍历窗口中的元素列表，并决定最先进入窗口的
+多少个元素需要被移除。剩余的元素会被交给用户指定的函数进行窗口的计算。如果没有Evictor的话，窗口中的所有元素会一起交给函数
+进行计算。
+
+//窗口触发时机, 当前watermark大于等于window的maxTimestamp。
+@Override
+	public TriggerResult onElement(Object element, long timestamp, TimeWindow window, TriggerContext ctx) throws Exception {
+		if (window.maxTimestamp() <= ctx.getCurrentWatermark()) {
+			// if the watermark is already past the window fire immediately
+			return TriggerResult.FIRE;
+		} else {
+			ctx.registerEventTimeTimer(window.maxTimestamp());
+			return TriggerResult.CONTINUE;
+		}
+	}
+
